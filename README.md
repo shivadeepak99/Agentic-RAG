@@ -34,19 +34,44 @@ User → run_agent() → LangGraph StateGraph
 
 ## Quickstart
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate                # Windows
-# source .venv/bin/activate            # macOS/Linux
+```text
++----------------------------------------------------------------------------------+
+|                               RUNNING THE SYSTEM                                 |
++----------------------------------------------------------------------------------+
+|  Option 1: Manual commands                                                       |
+|    Best when your machine already has heavyweight ML dependencies installed.      |
+|    Faster for iteration because you reuse your local Python environment.          |
+|                                                                                  |
+|  Option 2: Docker Compose                                                        |
+|    Best for one-command startup and reproducibility.                             |
+|    Slower on first run because Docker installs everything from scratch           |
+|    inside the container, including large ML dependencies.                        |
++----------------------------------------------------------------------------------+
+|  Important note                                                                  |
+|    This project uses large dependencies such as PyTorch and sentence-transformers |
+|    for local embeddings and optional reranking. First-time setup can take a      |
+|    while, especially in Docker. If you already have these installed locally,     |
+|    prefer the manual path for a faster startup.                                  |
++----------------------------------------------------------------------------------+
+```
 
+### Option 1 — Manual commands (fastest if dependencies are already installed)
+
+```bash
 pip install -r requirements.txt
 cp .env.example .env                   # then set GROQ_API_KEY
 ```
 
+Why this path is often faster:
+
+- if PyTorch, `sentence-transformers`, and related ML dependencies are already installed on your machine, you avoid reinstalling them inside a fresh container
+- local iteration is usually quicker for repeated ingestion / eval / ablation runs
+- it is the easiest path for development and debugging
+
 ### Ingest a corpus
 
 ```bash
-python scripts/run_ingestion.py --query "cat:cs.AI" --max-results 50
+python scripts/run_ingestion.py --query "cat:cs.AI" --max-results 150
 ```
 
 This fetches arXiv metadata, downloads PDFs, parses with PyMuPDF, chunks (900-char window with 150-char overlap), embeds with MiniLM, and stores in Chroma at `data/chroma/`.
@@ -74,7 +99,7 @@ uvicorn app.main:app --reload
 
 The `/ask` response includes `answer`, `trace`, `decision`, `documents`, and `session_id`.
 
-### One-click Docker run
+### Option 2 — One-click Docker run
 
 Copy the env template, set your flags, then start everything with one command:
 
@@ -91,6 +116,14 @@ What this does:
 - optionally bootstraps ingestion on first startup
 - persists Chroma / parsed data under `./data`
 - starts the FastAPI app on `http://127.0.0.1:8000`
+
+Why this path is slower on the first run:
+
+- Docker builds a fresh environment inside the container
+- that means reinstalling large packages like PyTorch and `sentence-transformers`
+- model downloads and ingestion bootstrap can also add noticeable startup time
+
+Use Docker when you want the cleanest reproducible setup. Use the manual path when you already have the heavy dependencies installed and want the fastest startup.
 
 Useful container flags in `.env`:
 
