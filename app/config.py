@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 6
     retrieval_bm25_top_k: int = 8
     retrieval_vector_top_k: int = 8
+    retrieval_hybrid_vector_k: int = 12
+    retrieval_hybrid_bm25_k: int = 12
+    retrieval_hybrid_fused_k: int = 16
+    retrieval_mode: str = "lightweight_hybrid"
+    retrieval_use_reranker: bool = False
+    retrieval_reranker_top_k: int = 6
+    retrieval_reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
 settings = Settings()

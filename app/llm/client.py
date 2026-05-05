@@ -56,7 +56,7 @@ _DECISION_SCHEMA = {
 
 
 _logger = get_logger("llm.client")
-_DECISION_MAX_TOKENS = 256
+_DECISION_MAX_TOKENS = 384
 
 
 @dataclass
@@ -114,6 +114,94 @@ class LLMClient:
             except Exception:
                 continue
         return candidate
+
+    @staticmethod
+    def _normalize_tool_args(tool_args: object) -> dict:
+        if not isinstance(tool_args, dict):
+            return {"query": None, "expression": None}
+        return {
+            "query": tool_args.get("query"),
+            "expression": tool_args.get("expression"),
+        }
+
+    def _decision_from_question(self, question: str, reasoning: str = "heuristic fallback") -> dict:
+        q = question.lower().strip()
+        base: dict = {
+            "query": None,
+            "tool_name": None,
+            "tool_args": {"query": None, "expression": None},
+            "reasoning": reasoning,
+            "_strict_schema": False,
+        }
+
+        if not q or q in {"tell me more", "explain it", "expand on that"}:
+            return {**base, "action": "clarify"}
+        if any(w in q for w in ("password", "credit card", "ssn", "social security")):
+            return {**base, "action": "refuse"}
+        if "arxiv" in q or "find paper" in q or "recent papers" in q:
+            return {
+                **base,
+                "action": "tool",
+                "tool_name": "arxiv_search",
+                "tool_args": {"query": question, "expression": None},
+                "reasoning": "user requested arxiv search",
+            }
+        if any(c.isdigit() for c in q) and any(op in q for op in ("+", "-", "*", "/", "**")):
+            return {
+                **base,
+                "action": "tool",
+                "tool_name": "calculator",
+                "tool_args": {"query": None, "expression": question},
+                "reasoning": "arithmetic expression detected",
+            }
+        if len(q) < 4 or q in {"hi", "hello", "hey"}:
+            return {**base, "action": "answer"}
+        return {
+            **base,
+            "action": "retrieve",
+            "query": question,
+            "reasoning": "knowledge question → retrieve",
+        }
+
+    @staticmethod
+    def _extract_user_question(user: str) -> str:
+        for line in user.splitlines():
+            stripped = line.strip()
+            if stripped.lower().startswith("user question:"):
+                return stripped.split(":", 1)[1].strip()
+        return user.strip()
+
+    def _coerce_decision_json(self, raw: str, used_strict: bool, user: str) -> str:
+        candidate = (raw or "").strip()
+        extracted = self._extract_json_object(candidate)
+        for payload in (candidate, extracted):
+            if not payload:
+                continue
+            try:
+                data = json.loads(payload)
+            except Exception:
+                continue
+            if isinstance(data, dict) and data.get("action") in ("retrieve", "clarify", "tool", "refuse", "answer"):
+                normalized = {
+                    "action": data["action"],
+                    "query": data.get("query"),
+                    "tool_name": data.get("tool_name"),
+                    "tool_args": self._normalize_tool_args(data.get("tool_args")),
+                    "reasoning": data.get("reasoning"),
+                    "_strict_schema": used_strict,
+                }
+                return json.dumps(normalized)
+
+        repaired = self._decision_from_question(
+            self._extract_user_question(user),
+            reasoning="heuristic schema repair",
+        )
+        _logger.warning(
+            "complete_json.heuristic_repair used_strict=%s raw_prefix=%r",
+            used_strict,
+            candidate[:160],
+        )
+        return json.dumps(repaired)
 
     @staticmethod
     def _extract_json_object(text: str) -> str | None:
@@ -211,7 +299,7 @@ class LLMClient:
                     used_streaming=False,
                 )
                 raw = (resp.choices[0].message.content or "").strip()
-                annotated = self._annotated_json_payload(raw, used_strict=True)
+                annotated = self._coerce_decision_json(raw, used_strict=True, user=user)
                 if self._extract_json_object(annotated) or annotated.startswith("{"):
                     return annotated
                 _logger.warning(
@@ -240,7 +328,7 @@ class LLMClient:
             used_streaming=False,
         )
         raw = (resp.choices[0].message.content or "").strip()
-        annotated = self._annotated_json_payload(raw, used_strict=False)
+        annotated = self._coerce_decision_json(raw, used_strict=False, user=user)
         if self._extract_json_object(annotated) or annotated.startswith("{"):
             _logger.warning(
                 "complete_json.best_effort_json strict_error=%s",
@@ -330,40 +418,8 @@ class LLMClient:
         return "Hello! I'm the Agentic RAG assistant. Ask me anything about cs.AI papers."
 
     def _mock_json(self, system: str, user: str) -> str:
-        question = ""
-        for line in user.splitlines():
-            stripped = line.strip()
-            if stripped.lower().startswith("user question:"):
-                question = stripped.split(":", 1)[1].strip()
-                break
-        q = question.lower().strip()
-
-        base: dict = {
-            "query": None,
-            "tool_name": None,
-            "tool_args": {},
-            "reasoning": "mock",
-            "_strict_schema": False,
-        }
-
-        if not q or q in {"tell me more", "explain it", "expand on that"}:
-            return json.dumps({**base, "action": "clarify"})
-        if any(w in q for w in ("password", "credit card", "ssn", "social security")):
-            return json.dumps({**base, "action": "refuse"})
-        if "arxiv" in q or "find paper" in q or "recent papers" in q:
-            return json.dumps({**base, "action": "tool",
-                               "tool_name": "arxiv_search",
-                               "tool_args": {"query": question},
-                               "reasoning": "user requested arxiv search"})
-        if any(c.isdigit() for c in q) and any(op in q for op in ("+", "-", "*", "/", "**")):
-            return json.dumps({**base, "action": "tool",
-                               "tool_name": "calculator",
-                               "tool_args": {"expression": question},
-                               "reasoning": "arithmetic expression detected"})
-        if len(q) < 4 or q in {"hi", "hello", "hey"}:
-            return json.dumps({**base, "action": "answer"})
-        return json.dumps({**base, "action": "retrieve", "query": question,
-                           "reasoning": "knowledge question → retrieve"})
+        question = self._extract_user_question(user)
+        return json.dumps(self._decision_from_question(question, reasoning="mock"))
 
 
 # ---------------------------------------------------------------------------

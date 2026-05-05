@@ -10,14 +10,28 @@ from app.tools.registry import TOOL_REGISTRY
 _logger = get_logger("agent.tool")
 
 
+def _normalize_tool_args(name: str, raw_args: dict) -> dict:
+    args = {k: v for k, v in raw_args.items() if v is not None}
+
+    if name == "arxiv_search":
+        if "query" not in args and "expression" in args:
+            args["query"] = args["expression"]
+        return {k: v for k, v in args.items() if k in {"query", "max_results"}}
+
+    if name == "calculator":
+        if "expression" not in args and "query" in args:
+            args["expression"] = args["query"]
+        return {k: v for k, v in args.items() if k == "expression"}
+
+    return args
+
+
 def tool(state: AgentState) -> dict:
     state.setdefault("trace", []).append("tool")
 
     decision = state.get("decision") or {}
     name = decision.get("tool_name")
-    # Strip null values — the strict JSON schema forces the LLM to always emit both
-    # "query" and "expression" fields, but each tool only accepts one of them.
-    args = {k: v for k, v in (decision.get("tool_args") or {}).items() if v is not None}
+    args = _normalize_tool_args(name or "", decision.get("tool_args") or {})
 
     if not name or name not in TOOL_REGISTRY:
         _logger.warning("tool.unknown_tool name=%s", name)

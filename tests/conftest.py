@@ -5,6 +5,8 @@ import pytest
 from pathlib import Path
 
 from app.config import settings
+from app.retrieval.lexical import reset_lexical_corpus
+from app.retrieval.reranker import reset_reranker
 import app.retrieval.vector_store as vs
 from app.memory.store import reset_session
 from app.llm.client import reset_llm_client
@@ -14,9 +16,14 @@ from app.llm.client import reset_llm_client
 def isolated_vector_store(tmp_path: Path):
     """Each test gets its own Chroma directory so stores don't bleed."""
     settings.chroma_persist_dir = tmp_path / "chroma"
+    settings.chunks_dir = tmp_path / "chunks"
     vs._store = None
+    reset_lexical_corpus()
+    reset_reranker()
     yield
     vs._store = None
+    reset_lexical_corpus()
+    reset_reranker()
 
 
 @pytest.fixture(autouse=True)
@@ -45,3 +52,4 @@ def seed_store(texts: list[str], sources: list[str] | None = None) -> None:
     metas = [{"id": f"t{i}", "source": sources[i] if sources else "seed"} for i in range(len(texts))]
     ids = [f"t{i}" for i in range(len(texts))]
     store.add_texts(texts=texts, metadatas=metas, ids=ids)
+    reset_lexical_corpus()

@@ -5,7 +5,14 @@ import pytest
 
 from app.retrieval.bm25 import BM25Index
 from app.retrieval.chunking import chunk_text, normalize_text
-from app.retrieval.hybrid import hybrid_search
+from app.retrieval.hybrid import (
+    _rank_fuse,
+    hybrid_search,
+    lightweight_hybrid_search,
+    true_hybrid_search,
+)
+from app.retrieval.lexical import get_lexical_corpus
+from app.retrieval.reranker import rerank
 from app.retrieval.vector_store import get_vector_store
 from tests.conftest import seed_store
 
@@ -171,3 +178,143 @@ class TestHybridSearch:
         hits = hybrid_search("transformer attention")
         scores = [h["score"] for h in hits]
         assert scores == sorted(scores, reverse=True)
+
+    def test_rank_fusion_dedupes_shared_ids(self):
+        fused = _rank_fuse(
+            [
+                {"id": "shared", "text": "alpha", "source": "vec", "score": 0.8},
+                {"id": "vec-only", "text": "beta", "source": "vec", "score": 0.7},
+            ],
+            [
+                {"id": "shared", "text": "alpha", "source": "bm25", "score": 2.0},
+                {"id": "bm25-only", "text": "gamma", "source": "bm25", "score": 1.8},
+            ],
+        )
+        ids = [h["id"] for h in fused]
+        assert ids.count("shared") == 1
+        assert "vec-only" in ids
+        assert "bm25-only" in ids
+
+    def test_true_hybrid_can_return_bm25_only_candidate(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.retrieval.hybrid._vector_candidates",
+            lambda query, top_k=None: [{"id": "v1", "text": "vector hit", "source": "vec", "score": 0.9}],
+        )
+        monkeypatch.setattr(
+            "app.retrieval.hybrid._bm25_candidates",
+            lambda query, top_k=None: [{"id": "b1", "text": "keyword exact hit", "source": "bm25", "score": 4.0}],
+        )
+        monkeypatch.setattr(
+            "app.retrieval.hybrid.rerank",
+            lambda query, docs, top_k=None: (docs[: top_k or len(docs)], False),
+        )
+        hits = true_hybrid_search("keyword hit", use_reranker=False)
+        ids = [h["id"] for h in hits]
+        assert "b1" in ids
+        assert "v1" in ids
+
+    def test_true_hybrid_can_return_vector_only_candidate(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.retrieval.hybrid._vector_candidates",
+            lambda query, top_k=None: [{"id": "v1", "text": "semantic hit", "source": "vec", "score": 0.9}],
+        )
+        monkeypatch.setattr(
+            "app.retrieval.hybrid._bm25_candidates",
+            lambda query, top_k=None: [],
+        )
+        monkeypatch.setattr(
+            "app.retrieval.hybrid.rerank",
+            lambda query, docs, top_k=None: (docs[: top_k or len(docs)], False),
+        )
+        hits = true_hybrid_search("semantic query", use_reranker=False)
+        assert [h["id"] for h in hits] == ["v1"]
+
+    def test_reranker_rescores_fused_candidates(self, monkeypatch):
+        monkeypatch.setattr(
+            "app.retrieval.hybrid._vector_candidates",
+            lambda query, top_k=None: [
+                {"id": "a", "text": "less relevant", "source": "vec", "score": 0.9},
+                {"id": "b", "text": "more relevant", "source": "vec", "score": 0.8},
+            ],
+        )
+        monkeypatch.setattr("app.retrieval.hybrid._bm25_candidates", lambda query, top_k=None: [])
+        monkeypatch.setattr(
+            "app.retrieval.hybrid.rerank",
+            lambda query, docs, top_k=None: (
+                [
+                    {**docs[1], "score": 2.0},
+                    {**docs[0], "score": 1.0},
+                ][: top_k or len(docs)],
+                True,
+            ),
+        )
+        hits = true_hybrid_search("rerank me", use_reranker=True)
+        assert [h["id"] for h in hits[:2]] == ["b", "a"]
+
+    def test_dispatch_defaults_to_lightweight_hybrid(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "retrieval_mode", "lightweight_hybrid")
+        monkeypatch.setattr(
+            "app.retrieval.hybrid.lightweight_hybrid_search",
+            lambda query: [{"id": "lw", "text": "lightweight", "source": "seed", "score": 1.0}],
+        )
+        hits = hybrid_search("rag")
+        assert hits[0]["id"] == "lw"
+
+    def test_dispatch_can_use_vector_only(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "retrieval_mode", "vector_only")
+        monkeypatch.setattr(
+            "app.retrieval.hybrid.vector_only_search",
+            lambda query: [{"id": "vec", "text": "vector", "source": "seed", "score": 1.0}],
+        )
+        hits = hybrid_search("rag")
+        assert hits[0]["id"] == "vec"
+
+    def test_dispatch_can_use_true_hybrid_without_reranker(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "retrieval_mode", "true_hybrid")
+        monkeypatch.setattr(settings, "retrieval_use_reranker", False)
+
+        def _fake_true_hybrid(query: str, use_reranker: bool = True) -> list[dict]:
+            assert use_reranker is False
+            return [{"id": "true", "text": "true hybrid", "source": "seed", "score": 1.0}]
+
+        monkeypatch.setattr("app.retrieval.hybrid.true_hybrid_search", _fake_true_hybrid)
+        hits = hybrid_search("rag")
+        assert hits[0]["id"] == "true"
+
+
+class TestLexicalCorpus:
+    def test_uses_vector_store_fallback_when_chunks_absent(self):
+        seed_store(texts=["Exact keyword match lives in vector store fallback."])
+        hits = get_lexical_corpus().search("keyword match", top_k=1)
+        assert hits
+        assert "keyword" in hits[0]["text"].lower()
+
+
+class TestReranker:
+    def test_fallback_returns_original_docs(self, monkeypatch):
+        docs = [{"id": "a", "text": "alpha", "source": "seed", "score": 0.5}]
+        monkeypatch.setattr("app.retrieval.reranker._get_reranker", lambda: None)
+        out, used = rerank("alpha", docs, top_k=1)
+        assert used is False
+        assert out == docs
+
+    def test_model_scores_docs_when_available(self, monkeypatch):
+        class FakeModel:
+            def predict(self, pairs):
+                assert len(pairs) == 2
+                return [0.1, 0.9]
+
+        docs = [
+            {"id": "a", "text": "alpha", "source": "seed", "score": 0.5},
+            {"id": "b", "text": "beta", "source": "seed", "score": 0.4},
+        ]
+        monkeypatch.setattr("app.retrieval.reranker._get_reranker", lambda: FakeModel())
+        out, used = rerank("beta", docs, top_k=2)
+        assert used is True
+        assert [d["id"] for d in out] == ["b", "a"]

@@ -1,10 +1,9 @@
-"""Ablation: hybrid (vector + BM25 rerank) vs. vector-only retrieval.
+"""Ablation: compare retrieval strategies.
 
 Run:
     python scripts/run_ablation.py
 
-Prints a side-by-side comparison table and exits with code 0.
-The assignment requires showing eval scores with and without hybrid reranking.
+Prints side-by-side comparison tables and exits with code 0.
 """
 from __future__ import annotations
 
@@ -20,16 +19,6 @@ from app.eval.evaluator import aggregate, run_eval
 
 import app.agent.nodes.retrieve as _retrieve_mod
 import app.retrieval.hybrid as _hybrid_mod
-
-
-def _vector_only_search(query: str) -> list[dict]:
-    """Return top-k vector hits with no BM25 reranking."""
-    from app.config import settings
-    from app.retrieval.vector_store import get_vector_store
-
-    store = get_vector_store()
-    hits = store.search(query, top_k=settings.retrieval_top_k)
-    return hits
 
 
 def _run_with_mode(label: str, search_fn) -> dict:
@@ -49,11 +38,25 @@ def _run_with_mode(label: str, search_fn) -> dict:
     return {"label": label, "results": results, "summary": summary}
 
 
-def main() -> int:
-    print("Running ablation study: hybrid vs. vector-only retrieval\n")
+def _run_dataset(label: str, dataset: list[dict], search_fn) -> dict:
+    """Run one ablation mode against a specific dataset slice."""
+    original_hybrid = _hybrid_mod.hybrid_search
+    original_node = _retrieve_mod.hybrid_search
 
-    hybrid = _run_with_mode("hybrid (vector + BM25 rerank)", _hybrid_mod.hybrid_search)
-    vector = _run_with_mode("vector-only (no BM25)", _vector_only_search)
+    _hybrid_mod.hybrid_search = search_fn
+    _retrieve_mod.hybrid_search = search_fn
+    try:
+        results = run_eval(dataset)
+    finally:
+        _hybrid_mod.hybrid_search = original_hybrid
+        _retrieve_mod.hybrid_search = original_node
+
+    summary = aggregate(results)
+    return {"label": label, "results": results, "summary": summary}
+
+
+def _print_comparison(title: str, hybrid: dict, vector: dict) -> None:
+    print(f"=== {title} ===\n")
 
     for mode in (hybrid, vector):
         s = mode["summary"]
@@ -63,7 +66,6 @@ def main() -> int:
               f"({s['n_with_expected_action']} cases with expected_action)")
         print()
 
-    # Per-case diff
     print(f"{'ID':<20} {'hybrid':>8} {'vec-only':>10}  {'delta':>8}")
     print("-" * 52)
     for hr, vr in zip(hybrid["results"], vector["results"]):
@@ -79,6 +81,47 @@ def main() -> int:
     print(f"{'TOTAL':<20} {hs:>8.3f} {vs:>10.3f}  {sign}{lift:>7.3f}")
     print()
     print(f"Hybrid {'outperforms' if lift > 0 else 'underperforms'} vector-only by {abs(lift):.3f} avg score.")
+    print()
+
+
+def main() -> int:
+    print("Running ablation study across retrieval strategies\n")
+
+    modes = [
+        ("vector-only", _hybrid_mod.vector_only_search),
+        ("lightweight hybrid", _hybrid_mod.lightweight_hybrid_search),
+        ("true hybrid (no reranker)", lambda q: _hybrid_mod.true_hybrid_search(q, use_reranker=False)),
+        ("true hybrid + cross-encoder", _hybrid_mod.hybrid_search),
+    ]
+    full_runs = [_run_with_mode(label, fn) for label, fn in modes]
+
+    retrieval_rows = [row for row in DATASET if row.get("expected_action") == "retrieve"]
+    retrieval_runs = [_run_dataset(label, retrieval_rows, fn) for label, fn in modes]
+
+    print("=== Full agent eval (includes tool/chat/refusal paths) ===\n")
+    for mode in full_runs:
+        s = mode["summary"]
+        print(f"=== {mode['label']} ===")
+        print(f"  avg_score:       {s['avg_score']:.3f}")
+        print(f"  action_accuracy: {s['action_accuracy']:.3f}  "
+              f"({s['n_with_expected_action']} cases with expected_action)")
+        print()
+
+    _print_comparison(
+        "Retrieval-sensitive subset: true hybrid + cross-encoder vs. vector-only",
+        retrieval_runs[-1],
+        retrieval_runs[0],
+    )
+    _print_comparison(
+        "Retrieval-sensitive subset: true hybrid + cross-encoder vs. lightweight hybrid",
+        retrieval_runs[-1],
+        retrieval_runs[1],
+    )
+    _print_comparison(
+        "Retrieval-sensitive subset: true hybrid + cross-encoder vs. true hybrid without reranker",
+        retrieval_runs[-1],
+        retrieval_runs[2],
+    )
     return 0
 
 

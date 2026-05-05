@@ -132,6 +132,32 @@ class VectorStore:
         out.sort(key=lambda x: x["score"], reverse=True)
         return out[:top_k]
 
+    def all_docs(self) -> list[dict]:
+        if self._collection is not None:
+            res = self._collection.get(include=["documents", "metadatas"])
+            docs = res.get("documents", [])
+            metas = res.get("metadatas", [])
+            out: list[dict] = []
+            for i, text in enumerate(docs):
+                meta = metas[i] if i < len(metas) else {}
+                out.append(
+                    {
+                        "id": str(meta.get("id") or f"chroma-{i}"),
+                        "text": text,
+                        "source": str(meta.get("source") or "chroma"),
+                    }
+                )
+            return out
+
+        return [
+            {
+                "id": d["id"],
+                "text": d["text"],
+                "source": str(d["meta"].get("source", "mem")),
+            }
+            for d in getattr(self, "_docs", [])
+        ]
+
 
 _store: VectorStore | None = None
 

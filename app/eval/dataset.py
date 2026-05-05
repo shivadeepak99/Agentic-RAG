@@ -35,6 +35,20 @@ DATASET: list[dict] = [
         "expected_action": "retrieve",
         "expected_contains": ["chain", "reason"],
     },
+    {
+        "id": "k5",
+        "kind": "knowledge",
+        "question": "What is self-attention in transformers?",
+        "expected_action": "retrieve",
+        "expected_contains": ["attention"],
+    },
+    {
+        "id": "k6",
+        "kind": "knowledge",
+        "question": "How do transformer models decide which tokens matter most?",
+        "expected_action": "retrieve",
+        "expected_contains": ["attention", "token"],
+    },
 
     # --- Tool: arXiv search ---
     {
