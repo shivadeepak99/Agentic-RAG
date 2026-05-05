@@ -74,6 +74,41 @@ uvicorn app.main:app --reload
 
 The `/ask` response includes `answer`, `trace`, `decision`, `documents`, and `session_id`.
 
+### One-click Docker run
+
+Copy the env template, set your flags, then start everything with one command:
+
+```bash
+cp .env.example .env
+# set GROQ_API_KEY if you want real LLM calls
+
+docker compose up --build
+```
+
+What this does:
+
+- builds the app image
+- optionally bootstraps ingestion on first startup
+- persists Chroma / parsed data under `./data`
+- starts the FastAPI app on `http://127.0.0.1:8000`
+
+Useful container flags in `.env`:
+
+- `BOOTSTRAP_INGEST=true|false` — run ingestion automatically before the server starts
+- `INGEST_QUERY=cat:cs.AI` — arXiv query used during bootstrap
+- `INGEST_MAX_RESULTS=20` — number of papers to fetch on bootstrap
+- `RESET_CHROMA=true|false` — rebuild the vector index on container start
+- `GROQ_MODEL=...` — choose the LLM model
+- `USE_REAL_LLM=true|false` — force live Groq calls or allow mock mode
+- `RETRIEVAL_MODE=lightweight_hybrid|vector_only|true_hybrid`
+- `RETRIEVAL_USE_RERANKER=true|false`
+
+For a fast demo startup, the defaults are intentionally conservative. If you want a larger corpus, raise `INGEST_MAX_RESULTS` and rerun:
+
+```bash
+docker compose up --build
+```
+
 ### Run evaluation
 
 ```bash
@@ -153,6 +188,10 @@ Copy `.env.example` to `.env` and set:
 - `EMBED_MODEL` — optional override of the sentence-transformers model.
 - `RETRIEVAL_MODE` — one of `lightweight_hybrid` (default), `vector_only`, or `true_hybrid`.
 - `RETRIEVAL_USE_RERANKER` — `false` by default; set `true` only for experiments with the cross-encoder path.
+- `BOOTSTRAP_INGEST` — `true` by default in Docker flow; ingests papers before the server starts if no persisted index exists.
+- `INGEST_QUERY` — bootstrap arXiv query, default `cat:cs.AI`.
+- `INGEST_MAX_RESULTS` — bootstrap paper count, default `20`.
+- `RESET_CHROMA` — set `true` to force a clean reindex on the next container start.
 
 ## LangGraph Studio
 
