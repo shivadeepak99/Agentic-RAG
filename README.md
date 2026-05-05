@@ -20,10 +20,10 @@ User → run_agent() → LangGraph StateGraph
 
 - **Agent brain**: 7-node LangGraph (`decide`, `retrieve`, `tool`, `clarify`, `refuse`, `answer`, `chat`).
 - **Chat mode**: `answer` actions route to a dedicated `chat` node so greetings/meta questions don't get corpus-related disclaimers.
-- **Retrieval**: Hybrid (semantic vector via `sentence-transformers/all-MiniLM-L6-v2` + BM25 reranking) over a persistent Chroma collection.
+- **Retrieval**: Default is **lightweight hybrid**: semantic vector retrieval via `sentence-transformers/all-MiniLM-L6-v2` plus BM25 reranking over the vector candidate pool. A **true hybrid** fusion path and optional **cross-encoder reranker** are implemented behind config toggles and kept off by default because the current ablation did not show a win.
 - **Memory**: Session-keyed sliding-window conversation memory **plus** an LLM-summarized rolling memory of older turns. Both are injected into the `decide`, `answer`, and `chat` prompts.
 - **Tools**: Safe AST-based `calculator`, live `arxiv_search` against the public arXiv API.
-- **Evaluation**: 15 hand-written cases covering retrieval, tool routing, clarification, refusal, OOD, and smalltalk — scored on action-correctness, behavior markers, and content keywords.
+- **Evaluation**: 17 hand-written cases covering retrieval, tool routing, clarification, refusal, OOD, and smalltalk — scored on action-correctness, behavior markers, and content keywords.
 - **Observability**: Structured JSON logs at every node + a per-request `trace`/`decision`/`documents` payload returned by the `/ask` API.
 
 ## Memory types (per the assignment rubric)
@@ -82,13 +82,20 @@ python scripts/run_eval.py
 
 Writes per-case results to `data/eval/results.json` and prints aggregate metrics: average composite score and **action accuracy** (fraction of cases where the router picked the expected action).
 
-### Hybrid retrieval ablation
+### Retrieval ablation
 
 ```bash
 python scripts/run_ablation.py
 ```
 
-Runs the eval dataset twice — once with hybrid (vector + BM25 rerank) and once with vector-only — then prints a side-by-side score table showing the lift from BM25 reranking.
+Runs the eval dataset across four retrieval modes:
+
+- `vector-only`
+- `lightweight hybrid` (current default)
+- `true hybrid (no reranker)`
+- `true hybrid + cross-encoder`
+
+The script prints both the full-agent score table and the retrieval-sensitive subset. On the current benchmark, the cross-encoder path did **not** improve results, so it remains disabled by default.
 
 ### Tests
 
@@ -104,7 +111,7 @@ pytest -q
 | LLM provider | OpenAI, Anthropic, Groq, local | **Groq `openai/gpt-oss-120b`** — fast inference, large context, and strict JSON-schema structured outputs for routing decisions. |
 | Embeddings | OpenAI text-embedding-3, BGE, MiniLM, hash | **`sentence-transformers/all-MiniLM-L6-v2`** — runs locally for free, 384 dims, ~22MB, well-benchmarked. The repo also contains a SHA256 hash fallback so it degrades gracefully if the model can't be loaded (used only as a no-network safety net). |
 | Vector store | FAISS, Chroma, Qdrant, in-memory | **Chroma `PersistentClient`** — local persistence, simple API, suffix collection name with `_semantic`/`_hash` so a model swap doesn't poison an existing index. |
-| Retrieval technique | Top-k cosine only, hybrid, reranking, HyDE, multi-query | **Hybrid (vector + BM25 rerank)** — vector recalls semantically related chunks, BM25 then reranks the candidate pool to lift exact-keyword matches. Weights `0.7 * vec + 0.3 * bm25_norm`. Run `python scripts/run_ablation.py` to see the scored comparison against vector-only. |
+| Retrieval technique | Top-k cosine only, lightweight hybrid, true hybrid fusion, cross-encoder reranking | **Default: lightweight hybrid (vector + BM25 rerank over vector hits)** — it gave the best efficiency/quality tradeoff on the current eval. I also implemented **true hybrid** (independent vector + BM25 candidate generation with reciprocal-rank fusion) and an optional **cross-encoder reranker**. The ablation script shows the reranker did not help this benchmark, so it stays available as a toggle rather than the default. |
 | Chunking | Sentence-aware, recursive char splitter, fixed window | **Fixed 900-char window with 150-char overlap** — predictable, language-agnostic, fast. Acknowledged limitation: occasionally splits sentences. |
 | Memory | None, sliding-window only, summary-only, hybrid | **Hybrid**: a deque of the last 12 turns (recency) + an LLM-summarized rolling memory that compresses to ~1.5K chars when it grows past 3K (long-horizon recall). Both feed the `decide` and `answer` prompts. Falls back to tail-truncation when offline. |
 | Routing decision | Pure LLM, pure rules, hybrid | **LLM-primary, heuristic fallback** — Groq returns a JSON action; if the call or parse fails, a deterministic `_heuristic_decision()` covers refusal triggers, vague phrases, calculator detection, and `arxiv` keywords. The system is therefore never bricked by a transient API issue. |
@@ -113,7 +120,7 @@ pytest -q
 
 ## Failure modes observed
 
-- **Empty corpus / no relevant chunk** → `hybrid_search` returns `[]`; for in-domain questions the assistant answers from general technical knowledge (without citations), and for clearly out-of-domain questions it responds with an honest "I don't know"-style message.
+- **Empty corpus / no relevant chunk** → the answer prompt is grounded-first and should respond with an honest "I don't know based on available documents" style answer rather than fabricating a citation-backed response.
 - **LLM API failure** in `decide` → falls back to `_heuristic_decision()`. Logged as `decide.fallback_heuristic`.
 - **LLM API failure** in `answer` → returns a graceful message; if at least one document was retrieved, surfaces the top passage so the user still gets value.
 - **Tool failure / unknown tool / bad args** → `tool` node returns a human-readable error rather than crashing the graph.
@@ -122,12 +129,12 @@ pytest -q
 
 ## What I'd do with another week
 
-1. **Add a cross-encoder reranker** (`bge-reranker-v2-m3`) as a third retrieval stage after BM25 reranking and measure the lift via `scripts/run_ablation.py`.
-2. **Query rewriting + multi-query retrieval**: prepend a small LLM step that produces 3 paraphrases per question, retrieve for each, then deduplicate by chunk ID. Particularly helpful for technical jargon mismatches.
-3. **Parent-doc retrieval**: keep small chunks for matching but return their parent paragraph to the answer node — narrows recall without sacrificing context.
-4. **LLM-as-judge eval track**: add a second eval pass that uses Groq to score faithfulness vs. retrieved context, complementing the deterministic substring/action checks.
-5. **Per-paper metadata filtering**: when the user mentions a specific paper, filter the Chroma query by `source` rather than relying on the embedding to surface it.
-6. **LangSmith / OTLP traces** wired in so each node's prompt and output is inspectable end-to-end.
+1. **Retrieval-only evaluation**: add labeled relevance judgments (expected chunk ids / paper ids) so retrieval tuning is measured directly, not only through final-answer wording.
+2. **Retrieval confidence gating**: add a hard low-confidence path so clearly irrelevant/OOD retrieval results do not get passed to the answer node as if they were useful evidence.
+3. **Query rewriting + multi-query retrieval**: prepend a small LLM step that produces 3 paraphrases per question, retrieve for each, then deduplicate by chunk ID. Particularly helpful for technical jargon mismatches.
+4. **Parent-doc retrieval**: keep small chunks for matching but return their parent paragraph to the answer node — narrows recall without sacrificing context.
+5. **Per-paper metadata filtering**: when the user mentions a specific paper, filter retrieval by `source` rather than relying on the embedding to surface it.
+6. **Domain-tuned reranker or calibrated reranker gating**: revisit reranking only if a stronger model or better evaluation proves it helps this corpus.
 
 ## Known limitations
 
@@ -144,6 +151,8 @@ Copy `.env.example` to `.env` and set:
 - `GROQ_API_KEY` — required for real LLM calls.
 - `GROQ_MODEL` — default `openai/gpt-oss-120b`.
 - `EMBED_MODEL` — optional override of the sentence-transformers model.
+- `RETRIEVAL_MODE` — one of `lightweight_hybrid` (default), `vector_only`, or `true_hybrid`.
+- `RETRIEVAL_USE_RERANKER` — `false` by default; set `true` only for experiments with the cross-encoder path.
 
 ## LangGraph Studio
 
