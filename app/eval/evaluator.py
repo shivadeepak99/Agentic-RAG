@@ -121,6 +121,17 @@ def _behavior_score(row: dict, answer: str, decision: dict) -> tuple[float | Non
             notes.append("OOD handling weak: answer does not clearly acknowledge uncertainty")
         return score, notes
 
+    if kind == "memory":
+        # Memory case: the agent must resolve a vague reference using injected history
+        # and route to retrieve (not clarify).  If it clarifies, memory wasn't used.
+        if action == "clarify":
+            notes.append("memory behavior failure: agent asked for clarification instead of resolving the reference from history")
+            return 0.0, notes
+        if action in {"refuse"}:
+            notes.append(f"memory behavior mismatch: routed to {action!r}")
+            return 0.0, notes
+        return 1.0, notes
+
     # knowledge
     if not answer.strip():
         notes.append("knowledge answer is empty")
@@ -222,7 +233,7 @@ def run_eval(dataset: list[dict]) -> list[EvalResult]:
     results: list[EvalResult] = []
 
     for row in dataset:
-        out = run_agent(graph, row["question"])
+        out = run_agent(graph, row["question"], history=row.get("history", ""))
         results.append(_score_row(row, out))
 
     return results

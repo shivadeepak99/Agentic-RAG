@@ -96,21 +96,21 @@ Hybrid underperforms vector-only by 0.031 avg score.
 - action_accuracy: 1.000  (8 cases with expected_action)
 
 ```text
-ID                     hybrid   vec-only     delta
-----------------------------------------------------
-k1                      0.750      0.750  +  0.000
-k2                      1.000      1.000  +  0.000
-k3                      1.000      1.000  +  0.000
-k4                      1.000      1.000  +  0.000
-k5                      1.000      1.000  +  0.000
-k6                      0.750      1.000   -0.250
-o1                      1.000      1.000  +  0.000
-o2                      0.833      0.833  +  0.000
-----------------------------------------------------
-TOTAL                   0.917      0.948   -0.031
+ID                  true-hybrid+xenc   lw-hybrid     delta
+------------------------------------------------------------
+k1                             0.750       0.750  +  0.000
+k2                             1.000       1.000  +  0.000
+k3                             1.000       1.000  +  0.000
+k4                             1.000       1.000  +  0.000
+k5                             1.000       1.000  +  0.000
+k6                             0.750       1.000   -0.250
+o1                             1.000       1.000  +  0.000
+o2                             0.833       0.833  +  0.000
+------------------------------------------------------------
+TOTAL                          0.917       0.948   -0.031
 ```
 
-Hybrid underperforms vector-only by 0.031 avg score.
+True hybrid + cross-encoder underperforms lightweight hybrid by 0.031 avg score.
 
 ## Retrieval-sensitive subset: true hybrid + cross-encoder vs. true hybrid without reranker
 
@@ -123,18 +123,19 @@ Hybrid underperforms vector-only by 0.031 avg score.
 - action_accuracy: 1.000  (8 cases with expected_action)
 
 ```text
-ID                     hybrid   vec-only     delta
-----------------------------------------------------
-k1                      0.750      0.750  +  0.000
-k2                      1.000      1.000  +  0.000
-k3                      1.000      1.000  +  0.000
-k4                      1.000      1.000  +  0.000
-k5                      1.000      1.000  +  0.000
-k6                      0.750      1.000   -0.250
-o1                      1.000      1.000  +  0.000
-o2                      0.833      1.000   -0.167
-----------------------------------------------------
-TOTAL                   0.917      0.969   -0.052
-``` 
+ID                  true-hybrid+xenc   true-hybrid     delta
+-------------------------------------------------------------
+k1                             0.750         0.750  +  0.000
+k2                             1.000         1.000  +  0.000
+k3                             1.000         1.000  +  0.000
+k4                             1.000         1.000  +  0.000
+k5                             1.000         1.000  +  0.000
+k6                             0.750         1.000   -0.250
+o1                             1.000         1.000  +  0.000
+o2                             0.833         1.000   -0.167
+-------------------------------------------------------------
+TOTAL                          0.917         0.969   -0.052
+```
 
-Hybrid underperforms vector-only by 0.052 avg score.
+True hybrid + cross-encoder underperforms true hybrid (no reranker) by 0.052 avg score.
+The cross-encoder reranker hurts on this benchmark — it is disabled by default.

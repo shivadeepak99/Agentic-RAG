@@ -16,3 +16,6 @@ data/eval/
 /.langgraph_api
 /.langgraph_api
 /info
+.claude 
+.claude/
+.claude

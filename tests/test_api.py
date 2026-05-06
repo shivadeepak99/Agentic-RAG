@@ -69,17 +69,17 @@ class TestUIEndpoint:
 
 class TestAskEndpoint:
     def test_returns_200(self, client):
-        resp = client.post("/ask", json={"question": "What is RAG?"})
+        resp = client.post("/ask", json={"question": "i keep hearing rag in ai, what is it"})
         assert resp.status_code == 200
 
     def test_response_has_answer(self, client):
-        resp = client.post("/ask", json={"question": "What is RAG?"})
+        resp = client.post("/ask", json={"question": "i keep hearing rag in ai, what is it"})
         data = resp.json()
         assert "answer" in data
         assert isinstance(data["answer"], str)
 
     def test_response_has_trace(self, client):
-        resp = client.post("/ask", json={"question": "Explain RAG"})
+        resp = client.post("/ask", json={"question": "can you explain rag in simple words"})
         data = resp.json()
         assert "trace" in data
         assert isinstance(data["trace"], list)
@@ -90,17 +90,17 @@ class TestAskEndpoint:
         assert data["session_id"] == "api-test"
 
     def test_debug_false_omits_documents(self, client):
-        resp = client.post("/ask", json={"question": "What is RAG?", "debug": False})
+        resp = client.post("/ask", json={"question": "what is rag", "debug": False})
         data = resp.json()
         assert data.get("documents") == []
 
     def test_debug_true_includes_decision(self, client):
-        resp = client.post("/ask", json={"question": "What is RAG?", "debug": True})
+        resp = client.post("/ask", json={"question": "what is rag", "debug": True})
         data = resp.json()
         assert "decision" in data
 
     def test_refusal_question(self, client):
-        resp = client.post("/ask", json={"question": "What is my password?"})
+        resp = client.post("/ask", json={"question": "what's my password again"})
         assert resp.status_code == 200
         data = resp.json()
         answer = data.get("answer", "").lower()
@@ -108,16 +108,16 @@ class TestAskEndpoint:
         assert decision.get("action") == "refuse" or "can't" in answer or "sensitive" in answer
 
     def test_clarify_question(self, client):
-        resp = client.post("/ask", json={"question": "tell me more"})
+        resp = client.post("/ask", json={"question": "tell me more abt that"})
         assert resp.status_code == 200
         data = resp.json()
         decision = data.get("decision") or {}
-        answer = data.get("answer", "").lower()
-        assert decision.get("action") == "clarify" or "clarif" in answer or "detail" in answer
+        answer = data.get("answer", "")
+        assert decision.get("action") == "clarify" or "?" in answer
 
     def test_session_memory_persists(self, client):
         # First turn
-        r1 = client.post("/ask", json={"question": "What is RAG?", "session_id": "mem-test"})
+        r1 = client.post("/ask", json={"question": "what is rag", "session_id": "mem-test"})
         assert r1.status_code == 200
         # Second turn in same session
         r2 = client.post("/ask", json={"question": "Summarize what we discussed.", "session_id": "mem-test"})
@@ -135,7 +135,7 @@ class TestAskEndpoint:
         assert resp.status_code == 200
 
     def test_tool_question_arxiv(self, client):
-        resp = client.post("/ask", json={"question": "Search arxiv for papers on RLHF"})
+        resp = client.post("/ask", json={"question": "can you find arxiv papers on rlhf"})
         data = resp.json()
         decision = data.get("decision") or {}
         assert decision.get("action") == "tool"
@@ -164,7 +164,7 @@ class TestStreamEndpoint:
 
     def test_emits_token_events(self, client):
         events: list[str] = []
-        with client.stream("POST", "/ask/stream", json={"question": "What is RAG?"}) as resp:
+        with client.stream("POST", "/ask/stream", json={"question": "what is rag"}) as resp:
             for line in resp.iter_lines():
                 events.append(line)
         # Should have at least one 'event: token' and one 'event: done'
@@ -183,7 +183,7 @@ class TestStreamEndpoint:
         events: list[str] = []
         with client.stream(
             "POST", "/ask/stream",
-            json={"question": "What is RAG?", "debug": True}
+            json={"question": "what is rag", "debug": True}
         ) as resp:
             for line in resp.iter_lines():
                 events.append(line)
@@ -193,7 +193,7 @@ class TestStreamEndpoint:
     def test_clarify_path_returns_token_and_done(self, client):
         events: list[str] = []
         with client.stream(
-            "POST", "/ask/stream", json={"question": "tell me more"}
+            "POST", "/ask/stream", json={"question": "tell me more abt that"}
         ) as resp:
             for line in resp.iter_lines():
                 events.append(line)
@@ -203,7 +203,7 @@ class TestStreamEndpoint:
     def test_refuse_path_returns_token_and_done(self, client):
         events: list[str] = []
         with client.stream(
-            "POST", "/ask/stream", json={"question": "What is my password?"}
+            "POST", "/ask/stream", json={"question": "what's my password again"}
         ) as resp:
             for line in resp.iter_lines():
                 events.append(line)

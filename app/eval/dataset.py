@@ -151,6 +151,12 @@ DATASET: list[dict] = [
     },
 
     # --- Out-of-domain ---
+    # expected_action is "retrieve" intentionally: the agent tries retrieval first
+    # (the routing prompt routes all factual questions to retrieve, including OOD).
+    # The evaluator then checks that the *answer* contains an uncertainty phrase
+    # ("I don't know based on available documents" etc.), so both the action score
+    # and the behavior/uncertainty scores must pass.  The failure mode is not
+    # wrong routing — it is the answer node hallucinating instead of admitting ignorance.
     {
         "id": "o1",
         "kind": "ood",
@@ -173,5 +179,21 @@ DATASET: list[dict] = [
         "question": "hey there",
         "expected_action": "answer",
         "concept_groups": [["hi", "hello", "hey"]],
+    },
+
+    # --- Memory: follow-up that requires episodic/conversation memory ---
+    # history is injected by run_eval so the agent sees a prior turn.
+    # Without memory the vague reference "the technique we discussed" would
+    # route to clarify; with memory the agent should resolve it and retrieve.
+    {
+        "id": "mem1",
+        "kind": "memory",
+        "question": "can you go deeper on the technique we just discussed",
+        "history": "User: what is retrieval augmented generation\nAssistant: RAG combines a retrieval step with a language model. The model retrieves relevant documents and uses them as grounding context before generating an answer.",
+        "expected_action": "retrieve",
+        "concept_groups": [
+            ["retrieval", "retrieve", "retrieved"],
+            ["rag", "retrieval augmented", "retrieval-augmented"],
+        ],
     },
 ]

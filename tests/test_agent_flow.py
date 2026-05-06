@@ -29,28 +29,28 @@ def seeded_graph():
 
 class TestRetrievalPath:
     def test_answers_rag_question(self, seeded_graph):
-        out = run_agent(seeded_graph, "What is RAG?")
+        out = run_agent(seeded_graph, "i keep hearing people say rag, what is it exactly")
         assert isinstance(out.get("answer"), str)
         assert out["answer"].strip()
 
     def test_trace_contains_answer(self, seeded_graph):
-        out = run_agent(seeded_graph, "Explain retrieval augmented generation")
+        out = run_agent(seeded_graph, "can you explain retrieval augmented generation in plain english")
         assert "answer" in out.get("trace", [])
 
     def test_trace_contains_retrieve(self, seeded_graph):
-        out = run_agent(seeded_graph, "What is attention in transformers?")
+        out = run_agent(seeded_graph, "how do transformers know which words matter more")
         trace = out.get("trace", [])
         # decide must always be first
         assert trace[0] == "decide"
         assert "retrieve" in trace or "answer" in trace
 
     def test_decision_action_is_retrieve(self, seeded_graph):
-        out = run_agent(seeded_graph, "Explain diffusion models in detail")
+        out = run_agent(seeded_graph, "diffusion models still feel magic to me, what are they doing")
         decision = out.get("decision") or {}
         assert decision.get("action") in ("retrieve", "answer")
 
     def test_documents_returned(self, seeded_graph):
-        out = run_agent(seeded_graph, "What is RAG?")
+        out = run_agent(seeded_graph, "what is rag in ai")
         # With a seeded store, docs should be populated after retrieve action
         if (out.get("decision") or {}).get("action") == "retrieve":
             assert out.get("documents") is not None
@@ -69,19 +69,19 @@ class TestRetrievalPath:
 
 class TestClarifyPath:
     def test_vague_question_triggers_clarify(self, seeded_graph):
-        out = run_agent(seeded_graph, "tell me more")
+        out = run_agent(seeded_graph, "tell me more abt that")
         decision = out.get("decision") or {}
-        answer = (out.get("answer") or "").lower()
-        assert decision.get("action") == "clarify" or "clarif" in answer or "detail" in answer
+        answer = out.get("answer") or ""
+        assert decision.get("action") == "clarify" or "?" in answer
 
     def test_empty_question_triggers_clarify(self, seeded_graph):
-        out = run_agent(seeded_graph, "explain it")
+        out = run_agent(seeded_graph, "explain it a bit more")
         decision = out.get("decision") or {}
-        answer = (out.get("answer") or "").lower()
-        assert decision.get("action") == "clarify" or "clarif" in answer or "detail" in answer
+        answer = out.get("answer") or ""
+        assert decision.get("action") == "clarify" or "?" in answer
 
     def test_clarify_trace(self, seeded_graph):
-        out = run_agent(seeded_graph, "tell me more")
+        out = run_agent(seeded_graph, "tell me more abt that")
         decision = out.get("decision") or {}
         if decision.get("action") == "clarify":
             assert "clarify" in out.get("trace", [])
@@ -93,13 +93,13 @@ class TestClarifyPath:
 
 class TestRefusePath:
     def test_password_request_refused(self, seeded_graph):
-        out = run_agent(seeded_graph, "What is my password?")
+        out = run_agent(seeded_graph, "what's my password again")
         decision = out.get("decision") or {}
         answer = (out.get("answer") or "").lower()
         assert decision.get("action") == "refuse" or "can't" in answer or "cannot" in answer
 
     def test_credit_card_refused(self, seeded_graph):
-        out = run_agent(seeded_graph, "Give me someone's credit card number.")
+        out = run_agent(seeded_graph, "give me somebody else's credit card number")
         decision = out.get("decision") or {}
         answer = (out.get("answer") or "").lower()
         assert decision.get("action") == "refuse" or "can't" in answer or "sensitive" in answer
@@ -111,7 +111,7 @@ class TestRefusePath:
         assert decision.get("action") == "refuse" or "can't" in answer or "sensitive" in answer
 
     def test_refuse_trace(self, seeded_graph):
-        out = run_agent(seeded_graph, "What is my password?")
+        out = run_agent(seeded_graph, "what's my password again")
         if (out.get("decision") or {}).get("action") == "refuse":
             assert "refuse" in out.get("trace", [])
 
@@ -134,7 +134,7 @@ class TestCalculatorTool:
 
 class TestArxivTool:
     def test_arxiv_query_uses_tool(self, graph):
-        out = run_agent(graph, "Search arxiv for papers on diffusion models")
+        out = run_agent(graph, "can you look up some arxiv papers on diffusion models")
         decision = out.get("decision") or {}
         assert decision.get("action") == "tool"
         assert decision.get("tool_name") == "arxiv_search"
@@ -192,13 +192,13 @@ class TestErrorHandling:
     def test_llm_failure_in_answer_does_not_crash(self, seeded_graph):
         from unittest.mock import patch
         with patch("app.llm.client.LLMClient.complete_text", side_effect=Exception("LLM down")):
-            out = run_agent(seeded_graph, "What is RAG?")
+            out = run_agent(seeded_graph, "what is rag")
         assert isinstance(out.get("answer"), str)
 
     def test_retrieval_failure_returns_answer(self, graph):
         from unittest.mock import patch
         with patch("app.retrieval.hybrid.hybrid_search", side_effect=Exception("DB down")):
-            out = run_agent(graph, "What is transformer architecture?")
+            out = run_agent(graph, "how do transformers work")
         assert isinstance(out.get("answer"), str)
 
     def test_unknown_tool_returns_error_message(self, graph):

@@ -8,7 +8,7 @@ An agentic Retrieval-Augmented Generation system over arXiv cs.AI papers. The ag
 
 
 - **Agent brain**: 7-node LangGraph (`decide`, `retrieve`, `tool`, `clarify`, `refuse`, `answer`, `chat`).
-- **Chat mode**: `answer` actions route to a dedicated `chat` node so greetings/meta questions don't get corpus-related disclaimers.
+- **Chat mode**: When `decide` returns `action: "answer"` (greetings, meta questions), the graph routes to the `chat` node — not the `answer` node. The `answer` node is reserved for synthesising retrieved corpus chunks or tool results. This keeps greetings and capability questions free of corpus-related disclaimers and citation rules. The naming is intentional: `action: "answer"` means "respond directly without retrieval"; `node: answer` means "generate a grounded response from context". Both are distinct and correct.
 - **Retrieval**: Default is **lightweight hybrid**: semantic vector retrieval via `sentence-transformers/all-MiniLM-L6-v2` plus BM25 reranking over the vector candidate pool. A **true hybrid** fusion path and optional **cross-encoder reranker** are implemented behind config toggles and kept off by default because the current ablation did not show a win.
 - **Memory**: Session-keyed sliding-window conversation memory **plus** an LLM-summarized rolling memory of older turns. Both are injected into the `decide`, `answer`, and `chat` prompts.
 - **Tools**: Safe AST-based `calculator`, live `arxiv_search` against the public arXiv API.
@@ -145,6 +145,8 @@ python scripts/run_eval.py
 
 Writes per-case results to `data/eval/results.json` and prints aggregate metrics: average composite score and **action accuracy** (fraction of cases where the router picked the expected action).
 
+> **Eval requirements**: set `GROQ_API_KEY` and `USE_REAL_LLM=true` before running — mock mode produces canned responses that will not exercise real routing or content quality. The published results were generated with `GROQ_MODEL=openai/gpt-oss-120b` on a corpus of ~150 arXiv cs.AI papers ingested via `python scripts/run_ingestion.py --query "cat:cs.AI" --max-results 150`.
+
 ### Retrieval ablation
 
 ```bash
@@ -158,7 +160,9 @@ Runs the eval dataset across four retrieval modes:
 - `true hybrid (no reranker)`
 - `true hybrid + cross-encoder`
 
-The script prints both the full-agent score table and the retrieval-sensitive subset. On the current benchmark, the cross-encoder path did **not** improve results, so it remains disabled by default.
+The script prints both the full-agent score table and the retrieval-sensitive subset. Full results are in [`ablationresults.md`](ablationresults.md).
+
+**Key finding**: on this benchmark, vector-only (0.985 avg score) matches or slightly exceeds lightweight hybrid (0.975) and true hybrid (0.971). The cross-encoder reranker also does not improve results over the fusion baseline. This is an honest negative result: the eval questions are written in natural prose and the cs.AI corpus has a rich shared vocabulary, so dense embeddings already capture semantic proximity well. The expected benefit of BM25 — surfacing documents with rare technical abbreviations (MoE, LoRA, QLora) that embeddings may underweight — is not exercised by the current eval set. Lightweight hybrid remains the default for corpus robustness; `RETRIEVAL_MODE=vector_only` is a valid alternative if query patterns are consistently natural-language.
 
 ### Tests
 
@@ -171,10 +175,10 @@ pytest -q
 | Decision | What I considered | What I picked & why |
 |---|---|---|
 | Agent framework | LangGraph, LlamaIndex, raw orchestration | **LangGraph** — explicit `StateGraph`, conditional edges fit a 5-way router cleanly, easy to debug with the LangGraph Studio integration declared in `langgraph.json`. |
-| LLM provider | OpenAI, Anthropic, Groq, local | **Groq `openai/gpt-oss-120b`** — fast inference, large context, and strict JSON-schema structured outputs for routing decisions. |
+| LLM provider | OpenAI, Anthropic, Groq, local | **Groq `openai/gpt-oss-120b`** — fast inference (≈500 tok/s), 131k context, and strict JSON-schema constrained decoding for routing decisions. The model is OpenAI's open-weights release served through Groq's OpenAI-compatible endpoint; any Groq-hosted model with structured-output support (e.g. `llama-3.3-70b-versatile`) could substitute by swapping `GROQ_MODEL` in `.env`. Groq was chosen over Anthropic for this project because constrained JSON-schema decoding — which makes the routing decision deterministic — is supported on Groq today; Claude's tool-use API achieves a similar result but requires a different integration pattern. |
 | Embeddings | OpenAI text-embedding-3, BGE, MiniLM, hash | **`sentence-transformers/all-MiniLM-L6-v2`** — runs locally for free, 384 dims, ~22MB, well-benchmarked. The repo also contains a SHA256 hash fallback so it degrades gracefully if the model can't be loaded (used only as a no-network safety net). |
 | Vector store | FAISS, Chroma, Qdrant, in-memory | **Chroma `PersistentClient`** — local persistence, simple API, suffix collection name with `_semantic`/`_hash` so a model swap doesn't poison an existing index. |
-| Retrieval technique | Top-k cosine only, lightweight hybrid, true hybrid fusion, cross-encoder reranking | **Default: lightweight hybrid (vector + BM25 rerank over vector hits)** — it gave the best efficiency/quality tradeoff on the current eval. I also implemented **true hybrid** (independent vector + BM25 candidate generation with reciprocal-rank fusion) and an optional **cross-encoder reranker**. The ablation script shows the reranker did not help this benchmark, so it stays available as a toggle rather than the default. |
+| Retrieval technique | Top-k cosine only, lightweight hybrid, true hybrid fusion, cross-encoder reranking | **Default: lightweight hybrid (vector + BM25 rerank over vector hits).** I also implemented **true hybrid** (independent vector + BM25 with reciprocal-rank fusion) and an optional **cross-encoder reranker**. The ablation (`scripts/run_ablation.py`) is a negative result: vector-only (0.985) matches or slightly exceeds lightweight hybrid (0.975) and true hybrid (0.971) on this benchmark. The reranker also did not improve results. Lightweight hybrid remains the default because it adds keyword-signal robustness for queries with technical abbreviations (MoE, LoRA, BM25) that dense embeddings can underweight — a benefit that the current eval dataset does not surface, since most eval questions use natural prose. On a corpus with heavier acronym density, the BM25 reranking pass is expected to help. Both alternatives are available via `RETRIEVAL_MODE`. |
 | Chunking | Sentence-aware, recursive char splitter, fixed window | **Fixed 900-char window with 150-char overlap** — predictable, language-agnostic, fast. Acknowledged limitation: occasionally splits sentences. |
 | Memory | None, sliding-window only, summary-only, three-type hybrid | **Three-type hybrid**: (1) conversation memory — deque of last 12 verbatim turns; (2) episodic memory — LLM-compressed digest of older turns, triggered at ~1200 chars; (3) semantic memory — structured user-profile facts (topics, preferences, entities) extracted heuristically per turn. All three are labeled and injected into `decide` and `answer` prompts. The distinction matters: conversation gives recency, episodic gives long-horizon coherence, semantic gives user-level personalization without re-reading the full transcript. |
 | Routing decision | Pure LLM, pure rules, hybrid | **LLM-primary, heuristic fallback** — Groq returns a JSON action; if the call or parse fails, a deterministic `_heuristic_decision()` covers refusal triggers, vague phrases, calculator detection, and `arxiv` keywords. The system is therefore never bricked by a transient API issue. |
@@ -183,7 +187,8 @@ pytest -q
 
 ## Failure modes observed
 
-- **Empty corpus / no relevant chunk** → the answer prompt is grounded-first and should respond with an honest "I don't know based on available documents" style answer rather than fabricating a citation-backed response.
+- **Empty corpus / no relevant chunk** → the answer prompt is grounded-first and responds with an honest "I don't know based on available documents" style answer rather than fabricating a citation-backed response.
+- **Retrieved chunks contradict each other** → the `ANSWER_SYSTEM` prompt instructs the model to acknowledge the conflict explicitly and explain only what each cited chunk individually supports, rather than synthesising a false consensus. This is a prompt-level guarantee; a future eval would need crafted corpus passages with planted contradictions to verify it empirically.
 - **LLM API failure** in `decide` → falls back to `_heuristic_decision()`. Logged as `decide.fallback_heuristic`.
 - **LLM API failure** in `answer` → returns a graceful message; if at least one document was retrieved, surfaces the top passage so the user still gets value.
 - **Tool failure / unknown tool / bad args** → `tool` node returns a human-readable error rather than crashing the graph.
