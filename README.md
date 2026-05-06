@@ -6,13 +6,15 @@ An agentic Retrieval-Augmented Generation system over arXiv cs.AI papers. The ag
 
 <img width="1298" height="940" alt="image" src="https://github.com/user-attachments/assets/f401d382-1404-45ff-afa4-6c72b8de0e60" />
 
+Full system, ingestion pipeline, memory, and retrieval diagrams: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+
 
 - **Agent brain**: 7-node LangGraph (`decide`, `retrieve`, `tool`, `clarify`, `refuse`, `answer`, `chat`).
 - **Chat mode**: When `decide` returns `action: "answer"` (greetings, meta questions), the graph routes to the `chat` node — not the `answer` node. The `answer` node is reserved for synthesising retrieved corpus chunks or tool results. This keeps greetings and capability questions free of corpus-related disclaimers and citation rules. The naming is intentional: `action: "answer"` means "respond directly without retrieval"; `node: answer` means "generate a grounded response from context". Both are distinct and correct.
-- **Retrieval**: Default is **lightweight hybrid**: semantic vector retrieval via `sentence-transformers/all-MiniLM-L6-v2` plus BM25 reranking over the vector candidate pool. A **true hybrid** fusion path and optional **cross-encoder reranker** are implemented behind config toggles and kept off by default because the current ablation did not show a win.
-- **Memory**: Session-keyed sliding-window conversation memory **plus** an LLM-summarized rolling memory of older turns. Both are injected into the `decide`, `answer`, and `chat` prompts.
+- **Retrieval**: Default is **lightweight hybrid**: semantic vector retrieval via `sentence-transformers/all-MiniLM-L6-v2` plus BM25 reranking over the vector candidate pool. A **true hybrid** (RRF fusion) path and optional **cross-encoder reranker** are implemented behind config toggles. The ablation confirms lightweight hybrid (0.986) is the best overall mode; the reranker is disabled by default because it adds compute cost without beating the lighter path on this benchmark.
+- **Memory**: Three types per session — conversation (last 12 turns verbatim), episodic (LLM-compressed digest of older turns), and semantic (structured user-profile facts extracted heuristically). All three are injected into the `decide`, `answer`, and `chat` prompts.
 - **Tools**: Safe AST-based `calculator`, live `arxiv_search` against the public arXiv API.
-- **Evaluation**: 17 hand-written cases covering retrieval, tool routing, clarification, refusal, OOD, and smalltalk — scored on action-correctness, behavior markers, and content keywords.
+- **Evaluation**: 18 hand-written cases covering retrieval, tool routing, clarification, refusal, OOD, memory resolution, and smalltalk — scored on action-correctness, behavior markers, and content keywords.
 - **Observability**: Structured JSON logs at every node + a per-request `trace`/`decision`/`documents` payload returned by the `/ask` API.
 
 ## Memory types (per the assignment rubric)
@@ -29,113 +31,72 @@ All three types are implemented and injected into every `decide` and `answer` LL
 
 ## Quickstart
 
-```text
-+----------------------------------------------------------------------------------+
-|                               RUNNING THE SYSTEM                                 |
-+----------------------------------------------------------------------------------+
-|  Option 1: Manual commands                                                       |
-|    Best when your machine already has heavyweight ML dependencies installed.      |
-|    Faster for iteration because you reuse your local Python environment.          |
-|                                                                                  |
-|  Option 2: Docker Compose                                                        |
-|    Best for one-command startup and reproducibility.                             |
-|    Slower on first run because Docker installs everything from scratch           |
-|    inside the container, including large ML dependencies.                        |
-+----------------------------------------------------------------------------------+
-|  Important note                                                                  |
-|    This project uses large dependencies such as PyTorch and sentence-transformers |
-|    for local embeddings and optional reranking. First-time setup can take a      |
-|    while, especially in Docker. If you already have these installed locally,     |
-|    prefer the manual path for a faster startup.                                  |
-+----------------------------------------------------------------------------------+
-```
+**Requirements:** Python 3.12+, a [Groq API key](https://console.groq.com) (free tier is sufficient).
 
-### Option 1 — Manual commands (fastest if dependencies are already installed)
+### Option 1 — Manual (fastest if ML dependencies are already installed)
 
 ```bash
+# 1. Clone
+git clone https://github.com/shivadeepak99/Agentic-RAG.git
+cd Agentic-RAG
+
+# 2. Install dependencies
 pip install -r requirements.txt
-cp .env.example .env                   # then set GROQ_API_KEY
-```
 
-Why this path is often faster:
+# 3. Configure environment
+cp .env.example .env
+# Open .env and set GROQ_API_KEY=<your key>
 
-- if PyTorch, `sentence-transformers`, and related ML dependencies are already installed on your machine, you avoid reinstalling them inside a fresh container
-- local iteration is usually quicker for repeated ingestion / eval / ablation runs
-- it is the easiest path for development and debugging
-
-### Ingest a corpus
-
-```bash
+# 4. Ingest a corpus (downloads ~150 arXiv cs.AI papers, embeds, stores in Chroma)
 python scripts/run_ingestion.py --query "cat:cs.AI" --max-results 150
+
+# 5. Start the server
+uvicorn app.main:app --reload
+# Open http://127.0.0.1:8000
 ```
 
-This fetches arXiv metadata, downloads PDFs, parses with PyMuPDF, chunks (900-char window with 150-char overlap), embeds with MiniLM, and stores in Chroma at `data/chroma/`.
+For a quick smoke-test without ingesting 150 papers, use `--max-results 20` in step 4.
 
-### Ask questions
-
-CLI (multi-turn, with memory):
+CLI usage (multi-turn with memory):
 
 ```bash
 python run.py --chat --session demo --show-trace
 ```
 
-CLI (one-shot):
+CLI one-shot:
 
 ```bash
 python run.py "Explain attention in transformers"
 ```
 
-API:
-
-```bash
-uvicorn app.main:app --reload
-# POST http://127.0.0.1:8000/ask  { "question": "...", "session_id": "demo" }
-```
-
 The `/ask` response includes `answer`, `trace`, `decision`, `documents`, and `session_id`.
 
-### Option 2 — One-click Docker run
-
-Copy the env template, set your flags, then start everything with one command:
+### Option 2 — Docker (cleanest reproducible setup)
 
 ```bash
 cp .env.example .env
-# set GROQ_API_KEY if you want real LLM calls
+# set GROQ_API_KEY in .env
 
 docker compose up --build
+# Open http://127.0.0.1:8000
 ```
 
-What this does:
+Docker builds a fresh environment, installs PyTorch and `sentence-transformers`, and optionally bootstraps ingestion before starting the server. First build takes longer; subsequent starts are fast because `./data` is volume-mounted and persisted.
 
-- builds the app image
-- optionally bootstraps ingestion on first startup
-- persists Chroma / parsed data under `./data`
-- starts the FastAPI app on `http://127.0.0.1:8000`
+> Use Docker for a clean one-command run. Use the manual path if you already have the ML dependencies installed and want faster iteration.
 
-Why this path is slower on the first run:
+Key `.env` flags for Docker:
 
-- Docker builds a fresh environment inside the container
-- that means reinstalling large packages like PyTorch and `sentence-transformers`
-- model downloads and ingestion bootstrap can also add noticeable startup time
-
-Use Docker when you want the cleanest reproducible setup. Use the manual path when you already have the heavy dependencies installed and want the fastest startup.
-
-Useful container flags in `.env`:
-
-- `BOOTSTRAP_INGEST=true|false` — run ingestion automatically before the server starts
-- `INGEST_QUERY=cat:cs.AI` — arXiv query used during bootstrap
-- `INGEST_MAX_RESULTS=20` — number of papers to fetch on bootstrap
-- `RESET_CHROMA=true|false` — rebuild the vector index on container start
-- `GROQ_MODEL=...` — choose the LLM model
-- `USE_REAL_LLM=true|false` — force live Groq calls or allow mock mode
-- `RETRIEVAL_MODE=lightweight_hybrid|vector_only|true_hybrid`
-- `RETRIEVAL_USE_RERANKER=true|false`
-
-For a fast demo startup, the defaults are intentionally conservative. If you want a larger corpus, raise `INGEST_MAX_RESULTS` and rerun:
-
-```bash
-docker compose up --build
-```
+| Flag | Default | Purpose |
+|---|---|---|
+| `GROQ_API_KEY` | — | Required for real LLM calls |
+| `BOOTSTRAP_INGEST` | `true` | Run ingestion before server starts |
+| `INGEST_QUERY` | `cat:cs.AI` | arXiv query for bootstrap |
+| `INGEST_MAX_RESULTS` | `20` | Papers to fetch on bootstrap (raise for larger corpus) |
+| `RESET_CHROMA` | `false` | Force clean reindex on next start |
+| `USE_REAL_LLM` | `true` | Set `false` to use mock responses (tests only) |
+| `RETRIEVAL_MODE` | `lightweight_hybrid` | `vector_only` or `true_hybrid` also available |
+| `RETRIEVAL_USE_RERANKER` | `false` | Enable cross-encoder reranker (experimental) |
 
 ### Run evaluation
 
@@ -160,15 +121,15 @@ Runs the eval dataset across four retrieval modes:
 - `true hybrid (no reranker)`
 - `true hybrid + cross-encoder`
 
-The script prints both the full-agent score table and the retrieval-sensitive subset. Full results are in [`ablationresults.md`](ablationresults.md).
+The script prints both the full-agent score table and the retrieval-sensitive subset. Full results are in [`ABLATION.md`](ABLATION.md).
 
-**Key findings** (see [`ablationresults.md`](ablationresults.md) for full per-case breakdown):
+**Key findings** (see [`ABLATION.md`](ABLATION.md) for full per-case breakdown):
 
 - **Lightweight hybrid (0.986) is the best overall mode**, edging vector-only (0.982) by +0.004 on the full 18-case eval. The BM25 reranking pass over vector candidates adds a consistent small gain.
 - **Cross-encoder reranker**: helps within the true-hybrid family (+0.019 over true hybrid without reranker on the retrieval subset), but does not beat lightweight hybrid. Disabled by default because the compute cost of loading and scoring a CrossEncoder is not justified relative to the cheaper lightweight path.
 - **All four modes achieve 100% action accuracy** — retrieval strategy does not affect routing decisions.
 
-> **Earlier results in git history** were generated by a buggy version of the script that called the `hybrid_search` dispatcher for the "true hybrid + cross-encoder" column. With the default `RETRIEVAL_MODE=lightweight_hybrid`, that column was actually running lightweight hybrid twice. The numbers above are from the corrected script.
+> See [`ABLATION.md`](ABLATION.md) for full per-case tables and methodology notes.
 
 ### Tests
 
@@ -203,12 +164,12 @@ pytest -q
 
 ## What I'd do with another week
 
-1. **Retrieval-only evaluation**: add labeled relevance judgments (expected chunk ids / paper ids) so retrieval tuning is measured directly, not only through final-answer wording.
-2. **Retrieval confidence gating**: add a hard low-confidence path so clearly irrelevant/OOD retrieval results do not get passed to the answer node as if they were useful evidence.
-3. **Query rewriting + multi-query retrieval**: prepend a small LLM step that produces 3 paraphrases per question, retrieve for each, then deduplicate by chunk ID. Particularly helpful for technical jargon mismatches.
-4. **Parent-doc retrieval**: keep small chunks for matching but return their parent paragraph to the answer node — narrows recall without sacrificing context.
-5. **Per-paper metadata filtering**: when the user mentions a specific paper, filter retrieval by `source` rather than relying on the embedding to surface it.
-6. **Domain-tuned reranker or calibrated reranker gating**: revisit reranking only if a stronger model or better evaluation proves it helps this corpus.
+1. **Retrieval-only evaluation**: add labeled relevance judgments (expected chunk IDs / paper IDs) so retrieval quality is measured directly rather than inferred from final-answer wording. This would also let me ablate chunk size properly — currently the 900-char window was chosen by convention, not evidence.
+2. **Cross-session memory persistence**: back `MemoryStore` with SQLite or Redis so session state survives server restarts. The current in-process store is the single biggest gap between this and a production deployment.
+3. **Retrieval confidence gating**: add a hard low-confidence path so clearly irrelevant OOD retrieval results do not reach the answer node as if they were useful evidence. Right now the answer node handles this via the grounding prompt — a score threshold would be a cleaner and more reliable signal.
+4. **Query rewriting + multi-query retrieval**: a dedicated pre-retrieval LLM step that generates 3 paraphrases per question, retrieves for each independently, then deduplicates by chunk ID. Particularly useful for technical abbreviations (MoE, LoRA) where a single query embedding may miss relevant chunks.
+5. **Parent-document retrieval**: index small chunks for matching precision but return their parent paragraph to the answer node — preserves context that fixed-window chunking discards.
+6. **Per-paper metadata filtering**: when the user references a specific paper by title or author, pre-filter the Chroma collection by `source` metadata rather than relying purely on embedding similarity to surface it.
 
 ## Known limitations
 
