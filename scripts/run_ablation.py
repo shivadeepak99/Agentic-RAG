@@ -21,7 +21,7 @@ import app.agent.nodes.retrieve as _retrieve_mod
 import app.retrieval.hybrid as _hybrid_mod
 
 
-def _run_with_mode(label: str, search_fn) -> dict:
+def _run_with_mode(label: str, short: str, search_fn) -> dict:
     """Monkey-patch hybrid_search and run the full eval."""
     original_hybrid = _hybrid_mod.hybrid_search
     original_node = _retrieve_mod.hybrid_search
@@ -35,10 +35,10 @@ def _run_with_mode(label: str, search_fn) -> dict:
         _retrieve_mod.hybrid_search = original_node
 
     summary = aggregate(results)
-    return {"label": label, "results": results, "summary": summary}
+    return {"label": label, "short": short, "results": results, "summary": summary}
 
 
-def _run_dataset(label: str, dataset: list[dict], search_fn) -> dict:
+def _run_dataset(label: str, short: str, dataset: list[dict], search_fn) -> dict:
     """Run one ablation mode against a specific dataset slice."""
     original_hybrid = _hybrid_mod.hybrid_search
     original_node = _retrieve_mod.hybrid_search
@@ -52,13 +52,13 @@ def _run_dataset(label: str, dataset: list[dict], search_fn) -> dict:
         _retrieve_mod.hybrid_search = original_node
 
     summary = aggregate(results)
-    return {"label": label, "results": results, "summary": summary}
+    return {"label": label, "short": short, "results": results, "summary": summary}
 
 
-def _print_comparison(title: str, hybrid: dict, vector: dict) -> None:
+def _print_comparison(title: str, left: dict, right: dict) -> None:
     print(f"=== {title} ===\n")
 
-    for mode in (hybrid, vector):
+    for mode in (left, right):
         s = mode["summary"]
         print(f"=== {mode['label']} ===")
         print(f"  avg_score:       {s['avg_score']:.3f}")
@@ -66,21 +66,25 @@ def _print_comparison(title: str, hybrid: dict, vector: dict) -> None:
               f"({s['n_with_expected_action']} cases with expected_action)")
         print()
 
-    print(f"{'ID':<20} {'hybrid':>8} {'vec-only':>10}  {'delta':>8}")
-    print("-" * 52)
-    for hr, vr in zip(hybrid["results"], vector["results"]):
-        delta = hr.score - vr.score
+    lh = left["short"]
+    rh = right["short"]
+    col = max(len(lh), len(rh), 10)
+    print(f"{'ID':<20} {lh:>{col}} {rh:>{col}}  {'delta':>8}")
+    print("-" * (20 + col * 2 + 14))
+    for lr, rr in zip(left["results"], right["results"]):
+        delta = lr.score - rr.score
         sign = "+" if delta >= 0 else ""
-        print(f"{hr.id:<20} {hr.score:>8.3f} {vr.score:>10.3f}  {sign}{delta:>7.3f}")
+        print(f"{lr.id:<20} {lr.score:>{col}.3f} {rr.score:>{col}.3f}  {sign}{delta:>7.3f}")
 
-    hs = hybrid["summary"]["avg_score"]
-    vs = vector["summary"]["avg_score"]
-    lift = hs - vs
+    ls = left["summary"]["avg_score"]
+    rs = right["summary"]["avg_score"]
+    lift = ls - rs
     sign = "+" if lift >= 0 else ""
-    print("-" * 52)
-    print(f"{'TOTAL':<20} {hs:>8.3f} {vs:>10.3f}  {sign}{lift:>7.3f}")
+    print("-" * (20 + col * 2 + 14))
+    print(f"{'TOTAL':<20} {ls:>{col}.3f} {rs:>{col}.3f}  {sign}{lift:>7.3f}")
     print()
-    print(f"Hybrid {'outperforms' if lift > 0 else 'underperforms'} vector-only by {abs(lift):.3f} avg score.")
+    direction = "outperforms" if lift > 0 else ("ties" if lift == 0 else "underperforms")
+    print(f"{left['label']} {direction} {right['label']} by {abs(lift):.3f} avg score.")
     print()
 
 
@@ -88,15 +92,15 @@ def main() -> int:
     print("Running ablation study across retrieval strategies\n")
 
     modes = [
-        ("vector-only", _hybrid_mod.vector_only_search),
-        ("lightweight hybrid", _hybrid_mod.lightweight_hybrid_search),
-        ("true hybrid (no reranker)", lambda q: _hybrid_mod.true_hybrid_search(q, use_reranker=False)),
-        ("true hybrid + cross-encoder", _hybrid_mod.hybrid_search),
+        ("vector-only",              "vec-only",   _hybrid_mod.vector_only_search),
+        ("lightweight hybrid",       "lw-hybrid",  _hybrid_mod.lightweight_hybrid_search),
+        ("true hybrid (no reranker)","th-no-xenc", lambda q: _hybrid_mod.true_hybrid_search(q, use_reranker=False)),
+        ("true hybrid + cross-encoder", "th+xenc", lambda q: _hybrid_mod.true_hybrid_search(q, use_reranker=True)),
     ]
-    full_runs = [_run_with_mode(label, fn) for label, fn in modes]
+    full_runs = [_run_with_mode(label, short, fn) for label, short, fn in modes]
 
     retrieval_rows = [row for row in DATASET if row.get("expected_action") == "retrieve"]
-    retrieval_runs = [_run_dataset(label, retrieval_rows, fn) for label, fn in modes]
+    retrieval_runs = [_run_dataset(label, short, retrieval_rows, fn) for label, short, fn in modes]
 
     print("=== Full agent eval (includes tool/chat/refusal paths) ===\n")
     for mode in full_runs:
