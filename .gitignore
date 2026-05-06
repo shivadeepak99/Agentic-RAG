@@ -1,21 +1,54 @@
-.env
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Test & coverage
 .pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Data directories (large, generated at runtime — run_ingestion.py produces these)
 data/chroma/
 data/raw_pdfs/
 data/parsed/
 data/chunks/
 data/eval/
-/.langgraph_api
-/.langgraph_api
-.langgraph_api/.langgraph_checkpoint.1.pckl
-/.langgraph_api
-.langgraph_api/.langgraph_checkpoint.2.pckl
-.info/
-/.langgraph_api
-/.langgraph_api
-/info
-.claude 
+
+# LangGraph API state
+.langgraph_api/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
 .claude/
-.claude
+
+# Misc
+*.pem
+*.log
+.info/
+/info

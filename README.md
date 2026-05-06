@@ -1,6 +1,14 @@
 # Agentic RAG System
 
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
+[![LangGraph](https://img.shields.io/badge/LangGraph-StateGraph-1C3C3C?style=flat&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
+[![Groq](https://img.shields.io/badge/Groq-gpt--oss--120b-F55036?style=flat)](https://console.groq.com)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat&logo=docker&logoColor=white)](./Dockerfile)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+
 An agentic Retrieval-Augmented Generation system over arXiv cs.AI papers. The agent decides for itself whether to **retrieve**, **call a tool**, **ask for clarification**, **refuse**, or **answer directly**.
+
+> **Companion docs:** [`ARCHITECTURE.md`](ARCHITECTURE.md) — system diagrams · [`ABLATION.md`](ABLATION.md) — retrieval benchmark results · [`REFERENCE.md`](REFERENCE.md) — full module reference
 
 ## Agent Architecture
 
