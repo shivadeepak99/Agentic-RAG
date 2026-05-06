@@ -4,19 +4,8 @@ An agentic Retrieval-Augmented Generation system over arXiv cs.AI papers. The ag
 
 ## Architecture
 
-```
-User → run_agent() → LangGraph StateGraph
-                       │
-                    [decide]  ← LLM router (Groq openai/gpt-oss-120b) + heuristic fallback
-                    │  │  │  │  │
-                    ▼  ▼  ▼  ▼  ▼
-               retrieve clarify tool refuse answer
-                    │              │
-                    ▼              ▼
-                 [answer]        [chat]
-                    │              │
-                  (END)          (END)
-```
+<img width="1298" height="940" alt="image" src="https://github.com/user-attachments/assets/f401d382-1404-45ff-afa4-6c72b8de0e60" />
+
 
 - **Agent brain**: 7-node LangGraph (`decide`, `retrieve`, `tool`, `clarify`, `refuse`, `answer`, `chat`).
 - **Chat mode**: `answer` actions route to a dedicated `chat` node so greetings/meta questions don't get corpus-related disclaimers.
