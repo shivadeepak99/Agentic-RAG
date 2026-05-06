@@ -413,10 +413,10 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
   <span class="chip">arXiv cs.AI</span>
   <div id="topbar-right">
     <label class="toggle-row">
-      <input type="checkbox" id="mem-toggle"> Memory
+      <input type="checkbox" id="mem-toggle" checked> Memory
     </label>
     <label class="toggle-row">
-      <input type="checkbox" id="debug-toggle"> Debug panel
+      <input type="checkbox" id="debug-toggle" checked> Debug panel
     </label>
     <label class="toggle-row">
       <input type="checkbox" id="stream-toggle" checked> Streaming
@@ -431,7 +431,7 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 <!-- MAIN -->
 <div id="main">
   <!-- MEMORY SIDEBAR -->
-  <div id="mem-col" class="hidden">
+  <div id="mem-col">
     <div id="mem-header">🧠 Memory</div>
     <div id="mem-body">
       <div class="mem-section">
@@ -488,7 +488,7 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
   </div>
 
   <!-- DEBUG PANEL -->
-  <div id="debug-col" class="hidden">
+  <div id="debug-col">
     <div id="debug-header">
       <span>Debug</span>
       <span id="debug-turn" style="font-weight:400;color:var(--muted)">—</span>
@@ -586,6 +586,9 @@ fetch('/health').then(r=>r.json()).then(d=>{
   if(live) modeChip.classList.add('live');
   document.getElementById('sb-mode').textContent = live ? 'real LLM' : 'mock (set USE_REAL_LLM=true)';
 }).catch(()=>{});
+
+// Load memory panel on startup since it's open by default
+refreshMemory();
 
 // ── Debug panel toggle ─────────────────────────────────────────────────────
 debugToggle.addEventListener('change', ()=>{
