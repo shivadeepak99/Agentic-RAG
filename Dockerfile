@@ -6,16 +6,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential curl \
-    && rm -rf /var/lib/apt/lists/*
+# Many transitive ML deps (via sentence-transformers) can pull CUDA-enabled PyTorch
+# wheels on Linux, which can balloon images by multiple GB. We install CPU-only
+# PyTorch explicitly first, then install the rest of the requirements.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt ./
-RUN pip install --upgrade pip \
-    && pip install -r requirements.txt
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential curl \
+    && pip install --upgrade pip \
+    && pip install --no-cache-dir --index-url ${TORCH_INDEX_URL} torch \
+    && pip install --no-cache-dir --extra-index-url ${TORCH_INDEX_URL} -r requirements.txt \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY app ./app
-COPY info ./info
 COPY scripts ./scripts
 COPY run.py README.md .env.example langgraph.json pytest.ini ./
 
