@@ -2,7 +2,7 @@
 
 An agentic Retrieval-Augmented Generation system over arXiv cs.AI papers. The agent decides for itself whether to **retrieve**, **call a tool**, **ask for clarification**, **refuse**, or **answer directly**.
 
-## Architecture
+## Agent Architecture
 
 <img width="1298" height="940" alt="image" src="https://github.com/user-attachments/assets/f401d382-1404-45ff-afa4-6c72b8de0e60" />
 
