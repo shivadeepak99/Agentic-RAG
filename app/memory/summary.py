@@ -24,7 +24,7 @@ class SummaryMemory:
     truncation so the system still works offline.
     """
 
-    def __init__(self, compress_threshold: int = 3000, target_chars: int = 1500) -> None:
+    def __init__(self, compress_threshold: int = 1200, target_chars: int = 800) -> None:
         self._summary: str = ""
         self._compress_threshold = compress_threshold
         self._target_chars = target_chars

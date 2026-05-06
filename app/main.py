@@ -54,6 +54,27 @@ def health() -> dict:
     }
 
 
+@app.get("/sessions")
+def list_sessions() -> dict:
+    """Return all active session IDs with their memory snapshots."""
+    from app.memory.store import _sessions
+    return {
+        sid: {
+            "turn_count": store.snapshot()["turn_count"],
+            "episodic_compressed": store.snapshot()["episodic_compressed"],
+            "top_topics": store.snapshot()["semantic"]["top_topics"],
+        }
+        for sid, store in _sessions.items()
+    }
+
+
+@app.get("/memory/{session_id}")
+def get_memory(session_id: str) -> dict:
+    """Return full memory snapshot for a session."""
+    session = get_session(session_id)
+    return session.snapshot()
+
+
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest) -> AskResponse:
     from app.llm.client import get_llm_client
@@ -63,6 +84,7 @@ def ask(req: AskRequest) -> AskResponse:
         req.question,
         history=session.history_text(),
         memory_summary=session.summary_text(),
+        semantic_memory=session.semantic_text(),
     )
     answer_text = result.get("answer", "")
     session.add_turn(req.question, answer_text)
@@ -94,6 +116,7 @@ async def ask_stream(req: AskRequest) -> StreamingResponse:
             "trace": [],
             "history": history,
             "memory_summary": summary,
+            "semantic_memory": session.semantic_text(),
         }
 
         # 1. Decide
@@ -295,6 +318,7 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 .dcard-title.tool{color:var(--yellow)}
 .dcard-title.trace{color:var(--green)}
 .dcard-title.stats{color:var(--muted2)}
+.dcard-title.memory{color:#f472b6}
 .kv{display:flex;gap:6px;margin-bottom:3px;align-items:flex-start}
 .kv .k{color:var(--muted);flex-shrink:0;min-width:80px}
 .kv .v{color:var(--text);word-break:break-all}
@@ -336,6 +360,28 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 
+/* ── MEMORY PANEL (left sidebar) ── */
+#mem-col{
+  width:220px;flex-shrink:0;display:flex;flex-direction:column;
+  border-right:1px solid var(--border);background:var(--surface);overflow:hidden;
+  transition:width .2s;
+}
+#mem-col.hidden{width:0;border:none;overflow:hidden}
+#mem-header{
+  padding:10px 14px;font-size:12px;font-weight:600;color:#f472b6;
+  border-bottom:1px solid var(--border);letter-spacing:.5px;text-transform:uppercase;
+  flex-shrink:0;
+}
+#mem-body{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:10px;font-size:11.5px;}
+.mem-section{margin-bottom:8px}
+.mem-label{font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#f472b6;margin-bottom:4px}
+.mem-value{color:var(--muted2);line-height:1.5;word-break:break-word}
+.mem-pill{
+  display:inline-block;background:var(--surface2);border:1px solid var(--border);
+  border-radius:4px;padding:1px 6px;font-size:10px;color:var(--muted2);margin:2px 2px 0 0;
+}
+.mem-empty{color:var(--muted);font-style:italic}
+
 /* ── WELCOME CARDS ── */
 .welcome{display:flex;flex-direction:column;gap:10px;max-width:560px;margin:auto;padding:30px 0}
 .welcome h2{font-size:22px;font-weight:700;color:var(--accent2)}
@@ -367,6 +413,9 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
   <span class="chip">arXiv cs.AI</span>
   <div id="topbar-right">
     <label class="toggle-row">
+      <input type="checkbox" id="mem-toggle"> Memory
+    </label>
+    <label class="toggle-row">
       <input type="checkbox" id="debug-toggle"> Debug panel
     </label>
     <label class="toggle-row">
@@ -381,6 +430,37 @@ body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
 
 <!-- MAIN -->
 <div id="main">
+  <!-- MEMORY SIDEBAR -->
+  <div id="mem-col" class="hidden">
+    <div id="mem-header">🧠 Memory</div>
+    <div id="mem-body">
+      <div class="mem-section">
+        <div class="mem-label">Session</div>
+        <div class="mem-value" id="mem-session">—</div>
+      </div>
+      <div class="mem-section">
+        <div class="mem-label">Turns remembered</div>
+        <div class="mem-value" id="mem-turns">0</div>
+      </div>
+      <div class="mem-section">
+        <div class="mem-label">Conversation memory</div>
+        <div class="mem-value mem-empty" id="mem-history">(empty)</div>
+      </div>
+      <div class="mem-section">
+        <div class="mem-label">Episodic summary</div>
+        <div class="mem-value mem-empty" id="mem-summary">(accumulating…)</div>
+      </div>
+      <div class="mem-section">
+        <div class="mem-label">Semantic — topics</div>
+        <div class="mem-value" id="mem-topics"><span class="mem-empty">(none yet)</span></div>
+      </div>
+      <div class="mem-section">
+        <div class="mem-label">Semantic — preferences</div>
+        <div class="mem-value" id="mem-prefs"><span class="mem-empty">(none yet)</span></div>
+      </div>
+    </div>
+  </div>
+
   <!-- CHAT -->
   <div id="chat-col">
     <div id="chat-area">
@@ -435,9 +515,66 @@ const chatArea = document.getElementById('chat-area');
 const debugCol = document.getElementById('debug-col');
 const debugBody = document.getElementById('debug-body');
 const debugToggle = document.getElementById('debug-toggle');
+const memToggle = document.getElementById('mem-toggle');
+const memCol = document.getElementById('mem-col');
 const streamToggle = document.getElementById('stream-toggle');
 const sessionEl = document.getElementById('session-id');
 const welcomeEl = document.getElementById('welcome');
+
+// ── Memory panel toggle ────────────────────────────────────────────────────
+memToggle.addEventListener('change', ()=>{
+  memCol.classList.toggle('hidden', !memToggle.checked);
+  if(memToggle.checked) refreshMemory();
+});
+
+async function refreshMemory(){
+  const sid = sessionEl.value || 'default';
+  document.getElementById('mem-session').textContent = sid;
+  try{
+    const r = await fetch(`/memory/${encodeURIComponent(sid)}`);
+    if(!r.ok) return;
+    const d = await r.json();
+    document.getElementById('mem-turns').textContent = d.turn_count || 0;
+
+    const hist = (d.history||'').trim();
+    const histEl = document.getElementById('mem-history');
+    if(hist){
+      histEl.classList.remove('mem-empty');
+      // Show last ~300 chars
+      histEl.textContent = hist.length > 300 ? '…' + hist.slice(-300) : hist;
+    } else {
+      histEl.classList.add('mem-empty');
+      histEl.textContent = '(empty — ask something first)';
+    }
+
+    const sumEl = document.getElementById('mem-summary');
+    const sumText = (d.episodic_summary||'').trim();
+    if(sumText){
+      sumEl.classList.remove('mem-empty');
+      sumEl.textContent = d.episodic_compressed
+        ? '[compressed] ' + sumText
+        : '[accumulating] ' + sumText.slice(0, 200) + (sumText.length>200?'…':'');
+    } else {
+      sumEl.classList.add('mem-empty');
+      sumEl.textContent = '(accumulating — needs ~5 turns)';
+    }
+
+    const sem = d.semantic || {};
+    const topicsEl = document.getElementById('mem-topics');
+    if(sem.top_topics && sem.top_topics.length){
+      topicsEl.innerHTML = sem.top_topics.map(t=>`<span class="mem-pill">${esc(t)}</span>`).join('');
+    } else {
+      topicsEl.innerHTML = '<span class="mem-empty">(none detected yet)</span>';
+    }
+
+    const prefsEl = document.getElementById('mem-prefs');
+    if(sem.preferences && sem.preferences.length){
+      prefsEl.innerHTML = sem.preferences.map(p=>`<span class="mem-pill">${esc(p)}</span>`).join('');
+    } else {
+      prefsEl.innerHTML = '<span class="mem-empty">(none inferred yet)</span>';
+    }
+  } catch(e){ /* ignore */ }
+}
 
 // ── Init: fetch server info ────────────────────────────────────────────────
 fetch('/health').then(r=>r.json()).then(d=>{
@@ -593,6 +730,7 @@ async function send(){
   } finally {
     sendBtn.disabled = false;
     qEl.focus();
+    if(memToggle.checked) refreshMemory();
   }
 }
 

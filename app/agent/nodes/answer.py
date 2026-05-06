@@ -31,15 +31,18 @@ def _format_context(state: AgentState) -> str:
 
 
 def _format_memory(state: AgentState) -> str:
+    semantic = (state.get("semantic_memory") or "").strip()
     summary = (state.get("memory_summary") or "").strip()
     history = (state.get("history") or "").strip()
     if summary and history and summary == history:
         summary = ""
     parts: list[str] = []
+    if semantic:
+        parts.append(f"[Semantic memory — user profile]\n{semantic}")
     if summary:
-        parts.append(f"Summary of earlier turns:\n{summary}")
+        parts.append(f"[Episodic memory — compressed earlier turns]\n{summary}")
     if history:
-        parts.append(f"Recent conversation:\n{history}")
+        parts.append(f"[Conversation memory — recent turns]\n{history}")
     return "\n\n".join(parts) if parts else "(no prior conversation)"
 
 

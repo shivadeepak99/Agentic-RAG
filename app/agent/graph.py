@@ -66,12 +66,14 @@ def run_agent(
     question: str,
     history: str = "",
     memory_summary: str = "",
+    semantic_memory: str = "",
 ) -> dict[str, Any]:
     initial: AgentState = {
         "question": question,
         "trace": [],
         "history": history,
         "memory_summary": memory_summary,
+        "semantic_memory": semantic_memory,
     }
 
     if compiled_graph is not None:

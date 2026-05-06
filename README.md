@@ -28,9 +28,15 @@ User → run_agent() → LangGraph StateGraph
 
 ## Memory types (per the assignment rubric)
 
-- **Conversation memory (short-term / working memory)**: the last N turns verbatim (recency + exact phrasing). Implemented by [app/memory/conversation.py](app/memory/conversation.py) and stored per-session in [app/memory/store.py](app/memory/store.py).
-- **Episodic memory (longer-horizon, compressed)**: a rolling summary of older conversation turns that survives beyond the sliding window. Implemented by [app/memory/summary.py](app/memory/summary.py).
-- **Semantic memory**: durable facts/preferences extracted from the user and stored for later recall (often as a key-value store or a vector index of “user facts”). This system does **not** persist a separate semantic-user-memory store by default; the *paper corpus* itself functions as semantic memory for the domain knowledge.
+All three types are implemented and injected into every `decide` and `answer` LLM call, labeled separately so the model can weight them appropriately.
+
+- **Conversation memory (short-term / working memory)**: the last 12 turns verbatim — exact phrasing, order preserved. Implemented by [`app/memory/conversation.py`](app/memory/conversation.py). Gives the agent the raw transcript of the recent session.
+
+- **Episodic memory (longer-horizon, compressed)**: a rolling LLM-summarized digest of older turns that would otherwise fall off the conversation window. Implemented by [`app/memory/summary.py`](app/memory/summary.py). Compresses to ~800 chars when the session transcript exceeds ~1200 chars. Falls back to tail truncation when the API is unavailable.
+
+- **Semantic memory (structured user-profile facts)**: per-session structured knowledge about *this user* — which AI topics they've asked about, inferred preferences (e.g. “prefers code examples”), and recently mentioned entities. Implemented by [`app/memory/semantic.py`](app/memory/semantic.py). Extracted heuristically from each turn with no extra LLM call cost. Exposed via the `/memory/{session_id}` API and the in-app Memory panel. Unlike conversation and episodic memory (which are raw text), semantic memory stores *typed facts* that persist across topic switches within a session.
+
+  Note: the arXiv corpus is the system's *domain* semantic memory — what it knows about the world. The `SemanticMemory` class is the *user-profile* semantic memory — what it knows about the person it's talking to. These are intentionally distinct.
 
 ## Quickstart
 
@@ -181,7 +187,7 @@ pytest -q
 | Vector store | FAISS, Chroma, Qdrant, in-memory | **Chroma `PersistentClient`** — local persistence, simple API, suffix collection name with `_semantic`/`_hash` so a model swap doesn't poison an existing index. |
 | Retrieval technique | Top-k cosine only, lightweight hybrid, true hybrid fusion, cross-encoder reranking | **Default: lightweight hybrid (vector + BM25 rerank over vector hits)** — it gave the best efficiency/quality tradeoff on the current eval. I also implemented **true hybrid** (independent vector + BM25 candidate generation with reciprocal-rank fusion) and an optional **cross-encoder reranker**. The ablation script shows the reranker did not help this benchmark, so it stays available as a toggle rather than the default. |
 | Chunking | Sentence-aware, recursive char splitter, fixed window | **Fixed 900-char window with 150-char overlap** — predictable, language-agnostic, fast. Acknowledged limitation: occasionally splits sentences. |
-| Memory | None, sliding-window only, summary-only, hybrid | **Hybrid**: a deque of the last 12 turns (recency) + an LLM-summarized rolling memory that compresses to ~1.5K chars when it grows past 3K (long-horizon recall). Both feed the `decide` and `answer` prompts. Falls back to tail-truncation when offline. |
+| Memory | None, sliding-window only, summary-only, three-type hybrid | **Three-type hybrid**: (1) conversation memory — deque of last 12 verbatim turns; (2) episodic memory — LLM-compressed digest of older turns, triggered at ~1200 chars; (3) semantic memory — structured user-profile facts (topics, preferences, entities) extracted heuristically per turn. All three are labeled and injected into `decide` and `answer` prompts. The distinction matters: conversation gives recency, episodic gives long-horizon coherence, semantic gives user-level personalization without re-reading the full transcript. |
 | Routing decision | Pure LLM, pure rules, hybrid | **LLM-primary, heuristic fallback** — Groq returns a JSON action; if the call or parse fails, a deterministic `_heuristic_decision()` covers refusal triggers, vague phrases, calculator detection, and `arxiv` keywords. The system is therefore never bricked by a transient API issue. |
 | Eval scoring | Substring match only, exact match, LLM-as-judge | **Composite per-case**: action-correctness, behavior markers (refusal / clarification / "I don't know" phrasing for OOD), and content keyword presence. Aggregate reports both `avg_score` and `action_accuracy`. LLM-as-judge intentionally skipped to keep eval deterministic and free. |
 | Observability | None, ad-hoc print, structured JSON, full tracing | **Structured JSON logs per node** + a `trace` field exposed via the API. LangSmith hooks not added by default but trivially enabled by env vars. |

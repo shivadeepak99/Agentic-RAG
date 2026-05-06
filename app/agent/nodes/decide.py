@@ -140,13 +140,17 @@ def decide(state: AgentState) -> dict:
 
     llm = get_llm_client()
 
+    semantic = (state.get("semantic_memory") or "").strip()
+
     memory_block = ""
     if summary and history and summary == history:
         summary = ""
+    if semantic:
+        memory_block += f"\nUser profile (semantic memory):\n{semantic}"
     if summary:
-        memory_block += f"\nEarlier-turn summary:\n{summary}"
+        memory_block += f"\nEarlier-turn summary (episodic memory):\n{summary}"
     if history:
-        memory_block += f"\nRecent turns:\n{history}"
+        memory_block += f"\nRecent turns (conversation memory):\n{history}"
 
     user_payload = (
         f"{memory_block}\n\nUser question: {question}\n\nReturn JSON decision only."

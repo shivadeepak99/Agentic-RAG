@@ -26,7 +26,10 @@ class AgentState(TypedDict, total=False):
     documents: list[RetrievedChunk]
     answer: str
     trace: list[str]
-    # Conversation memory: prior-turn transcript injected at graph entry.
+    # Conversation memory (short-term): verbatim last-N turns injected at graph entry.
     history: str
-    # Rolling LLM-summarized memory of older turns.
+    # Episodic memory: LLM-compressed rolling summary of older turns.
     memory_summary: str
+    # Semantic memory: structured user-level facts extracted across the session
+    # (topics of interest, preferences, named entities).
+    semantic_memory: str
